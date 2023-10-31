@@ -3,7 +3,9 @@
 #include <stdio.h>
 #include "pe.h"
 
-u8 rva_to_offset(u32 rva, IMAGE_SECTION_HEADER* sections, size_t header_sz, u64* out){
+#define BIT_MASK_63 (1 << 63) - 1
+
+u8 rva_to_offset(u64 rva, IMAGE_SECTION_HEADER* sections, size_t header_sz, u64* out){
   for(u32 i = 0; i < header_sz; i++){
     IMAGE_SECTION_HEADER section = sections[i];
     if(rva >= section.VirtualAddress && rva <= section.VirtualAddress + section.Misc.VirtualSize){
@@ -15,13 +17,12 @@ u8 rva_to_offset(u32 rva, IMAGE_SECTION_HEADER* sections, size_t header_sz, u64*
   return 0;
 }
 
-#define BIT_MASK_31 (1 << 63) - 1
 
-u8 read_string_rva(u32 rva, IMAGE_SECTION_HEADER* sections, size_t header_sz, char* out, FILE* file){
+u8 read_string_rva(u64 rva, IMAGE_SECTION_HEADER* sections, size_t header_sz, char* out, FILE* file){
   u64 file_offset = 0;
   u8 is_success = rva_to_offset(rva, sections, header_sz, &file_offset);
   if(is_success == 0){
-    printf("Invalid RVA: %d\n", rva);
+    printf("Invalid RVA: %x\n", rva);
     return 0;
   }
   fseek(file, file_offset, SEEK_SET);
@@ -29,15 +30,8 @@ u8 read_string_rva(u32 rva, IMAGE_SECTION_HEADER* sections, size_t header_sz, ch
   return 1;
 }
 
-int main(int argc, char *argv[]){
-  if(argc == 0){
-    printf("specify a file path");
-    return 0;
-  }
-  
-  printf("opening: %s\n", argv[1]);
-  
-  FILE* file = fopen(argv[1], "rb");
+u8 is_suspect(const char* file_name){
+  FILE* file = fopen(file_name, "rb");
   
   IMAGE_DOS_HEADER* dos_header = (IMAGE_DOS_HEADER*)malloc(sizeof(IMAGE_DOS_HEADER));
   fread(dos_header, sizeof(IMAGE_DOS_HEADER), 1, file);
@@ -57,6 +51,7 @@ int main(int argc, char *argv[]){
   IMAGE_NT_HEADERS64* image_header = (IMAGE_NT_HEADERS64*)malloc(sizeof(IMAGE_NT_HEADERS64));
   fread(image_header, sizeof(IMAGE_NT_HEADERS64), 1, file);
   if(image_header->Signature != 0x4550){
+    printf("Unsupported file format, PE magic");
     return 0;
   }
 
@@ -73,10 +68,11 @@ int main(int argc, char *argv[]){
   }
   
   fseek(file, import_addr, SEEK_SET);
-  IMAGE_IMPORT_DESCRIPTOR* imports = malloc(sizeof(IMAGE_IMPORT_DESCRIPTOR) * import.Size);
-  fread(imports, sizeof(IMAGE_IMPORT_DESCRIPTOR), import.Size, file);
+  u32 import_amt = (import.Size / sizeof(IMAGE_IMPORT_DESCRIPTOR));
+  IMAGE_IMPORT_DESCRIPTOR* imports = malloc(sizeof(IMAGE_IMPORT_DESCRIPTOR) * import_amt);
+  fread(imports, sizeof(IMAGE_IMPORT_DESCRIPTOR), import_amt, file);
 
-  for(u32 i = 0; i < import.Size; i++){
+  for(u32 i = 0; i < import_amt; i++){
     IMAGE_IMPORT_DESCRIPTOR import_info = imports[i];
     
     if(import_info.Name == 0){
@@ -84,15 +80,21 @@ int main(int argc, char *argv[]){
     }
 
     char* module_name = (char*)malloc(sizeof(char) * 128);
-    u8 is_success = read_string_rva(import_info.Name, sections, sections_amt, module_name, file);
+    is_success = read_string_rva(import_info.Name, sections, sections_amt, module_name, file);
     if(is_success == 0){
+      printf("Bailing invalid offset 1 @ %d RVA: %x\n" , i, import_info.Name);
       continue;
     }
 
     u64 iat_offset = 0;
+    if(import_info.OriginalFirstThunk == 0){
+      printf("No first thunk 1\n");
+      continue;
+    }
+
     is_success = rva_to_offset(import_info.OriginalFirstThunk , sections, sections_amt, &iat_offset);
     if(is_success == 0){
-      printf("Cannot locate IAT for %s\n", module_name);
+      printf("Cannot locate IAT for %s RVA %d\n", module_name, import_info.OriginalFirstThunk);
       return 0;
     }
 
@@ -109,13 +111,15 @@ int main(int argc, char *argv[]){
         u64 old_pos = 0;
         fgetpos(file, &old_pos);
 
-        if(!rva_to_offset(flags & (BIT_MASK_31) , sections, sections_amt, &iat_offset)){
+        if(!rva_to_offset(flags & (BIT_MASK_63), sections, sections_amt, &iat_offset)){
+          printf("Bailing invalid offset %x %x\n", flags & (BIT_MASK_63), flags);
           goto out;
         }
         fseek(file, iat_offset, SEEK_SET);
         fread(&hint, sizeof(u16), 1, file);
         fgets(name_buffer, 128, file);
         fseek(file, old_pos, SEEK_SET);
+        printf("name: %s\n", name_buffer);
 
         if(name_buffer[0] == 0 && hint == 0 && flags == 0){
           goto out;
@@ -127,4 +131,14 @@ int main(int argc, char *argv[]){
     
   }
   return 1;
+}
+
+int main(int argc, char *argv[]){
+  if(argc == 0){
+    printf("specify a file path");
+    return 0;
+  }
+  
+  printf("opening: %s\n", argv[1]);
+  is_suspect(argv[1]);
 }
