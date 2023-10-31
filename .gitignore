@@ -1,5 +1,5 @@
-.o
-.exe
-.sys
-buid
-.vscode
+*.o
+*.exe
+*.sys
+build/
+.vscode/
