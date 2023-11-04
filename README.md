@@ -4,6 +4,7 @@ Identifies drivers potentially vulnerable to Physical Memory access attacks.
 
 ## Running:
   - suspector.exe <file>
+  - python runner.py <in_dir> <vuln_dir>
 
 ## Limitations:
   - Only supports PE32+ files.
