@@ -9,10 +9,12 @@
 
 #define BIT_MASK_63 (1 << 63) - 1
 
-const char *sus_imports[3] = {
+const char *sus_imports[4] = {
     "MmMapIoSpace",
     "ZwMapViewOfSection",
-    "MmCopyMemory"};
+    "MmCopyMemory",
+    "MmCopyMemoryEx"
+};
 
 u8 rva_to_offset(u64 rva, IMAGE_SECTION_HEADER *sections, size_t header_sz, u64 *out)
 {
